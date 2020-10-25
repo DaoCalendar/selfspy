@@ -15,6 +15,11 @@
 # You should have received a copy of the GNU General Public License
 # along with Selfspy.  If not, see <http://www.gnu.org/licenses/>.
 
+import logging
+import os
+
+log = logging.getLogger(__name__)
+
 from Foundation import NSObject
 from AppKit import NSApplication, NSApp, NSWorkspace
 from Cocoa import (
@@ -27,7 +32,10 @@ from Cocoa import (
     NSFlagsChangedMask,
     NSAlternateKeyMask, NSCommandKeyMask, NSControlKeyMask,
     NSShiftKeyMask, NSAlphaShiftKeyMask,
-    NSApplicationActivationPolicyProhibited
+    NSApplicationActivationPolicyProhibited,
+    NSWorkspaceDidWakeNotification, NSWorkspaceWillSleepNotification,
+    NSWorkspaceWillPowerOffNotification, NSWorkspaceScreensDidSleepNotification,
+    NSWorkspaceScreensDidWakeNotification
 )
 from Quartz import (
     CGWindowListCopyWindowInfo,
@@ -36,19 +44,27 @@ from Quartz import (
     kCGNullWindowID
 )
 from PyObjCTools import AppHelper
-import config as cfg
+from selfspy.modules import config as cfg
 import signal
 import time
 
 FORCE_SCREEN_CHANGE = 10
 WAIT_ANIMATION = 1
 
+
+def release_lock():
+    if cfg.LOCK.is_locked():
+        cfg.LOCK.release()
+    log.info("Releasing lock and exiting")
+
+
 class Sniffer:
     def __init__(self):
-        self.key_hook = lambda x: True
-        self.mouse_button_hook = lambda x: True
-        self.mouse_move_hook = lambda x: True
-        self.screen_hook = lambda x: True
+        self.key_hook = lambda: True
+        self.mouse_button_hook = lambda: True
+        self.mouse_move_hook = lambda: True
+        self.screen_hook = lambda: True
+        self.start_current_process = lambda: True
         self.last_check_windows = time.time()
 
     def createAppDelegate(self):
@@ -68,23 +84,117 @@ class Sniffer:
                         | NSFlagsChangedMask)
                 NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(mask, sc.handler)
 
-            def applicationWillResignActive(self, notification):
-                self.applicationWillTerminate_(notification)
+                # use reference to outer class (Sniffer)'s attributes
+                self.start_current_process = sc.start_current_process
+
+                self.registerNotifications()
+
+            def registerNotifications(self):
+                """Register the app to listen to system state events such as:
+                wake, sleep, and power off"""
+                workspace = NSWorkspace.sharedWorkspace()
+                notificationCenter = workspace.notificationCenter()
+                notificationCenter.addObserver_selector_name_object_(
+                    self,
+                    self.receiveSleepNotification_,
+                    NSWorkspaceWillSleepNotification,
+                    None
+                )
+                notificationCenter.addObserver_selector_name_object_(
+                    self,
+                    self.receiveWakeNotification_,
+                    NSWorkspaceDidWakeNotification,
+                    None
+                )
+                notificationCenter.addObserver_selector_name_object_(
+                    self,
+                    self.receivePowerOffNotification_,
+                    NSWorkspaceWillPowerOffNotification,
+                    None
+                )
+                notificationCenter.addObserver_selector_name_object_(
+                    self,
+                    self.receiveScreensDidSleep_,
+                    NSWorkspaceScreensDidSleepNotification,
+                    None
+                )
+                notificationCenter.addObserver_selector_name_object_(
+                    self,
+                    self.receiveScreensDidWake_,
+                    NSWorkspaceScreensDidWakeNotification,
+                    None
+                )
+
+            """
+            receive*(self, notification) methods are called when a system
+            state occurs. They may be useful in the future but for now they are
+            there for logging sake.
+            """
+
+            def receiveSleepNotification_(self, notification):
+                log.info("Received sleep")
+
+            def receiveWakeNotification_(self, notification):
+                log.info("Received wake")
+                self.start_current_process()
+
+            def receivePowerOffNotification_(self, notification):
+                log.info("Received power off")
+                self.applicationShouldTerminate_(notification)
+
+            def receiveScreensDidSleep_(self, notification):
+                log.info("Received screen sleep")
+
+            def receiveScreensDidWake_(self, notification):
+                log.info("Received screen wake")
+                self.start_current_process()
+
+            def applicationWillResignActive_(self, notification):
+                log.info("Received app will resign")
+                release_lock()
                 return True
 
-            def applicationShouldTerminate_(self, notification):
-                self.applicationWillTerminate_(notification)
-                return True
+            def applicationShouldTerminate_(self, sender: NSApplication):
+                """
+                This is called even when the window just change.
+                Never allow the app to close. The outer class will take
+                care of that with signal handling.
+                """
+                log.info("Received app should terminate, but not signal TERMINATION")
+                return False
 
             def applicationWillTerminate_(self, notification):
+                log.info("Received app will terminate")
                 # need to release the lock here as when the
                 # application terminates it does not run the rest the
                 # original main, only the code that has crossed the
                 # pyobc bridge.
-                if cfg.LOCK.is_locked():
-                    cfg.LOCK.release()
-                print("Exiting")
+                release_lock()
                 return None
+
+            def applicationWillHide_(self, notification):
+                log.info("Received applicationWillHide_")
+
+            def applicationWillUnhide_(self, notification):
+                log.info("Received applicationWillUnhide_")
+
+            def applicationDidHide_(self, notification):
+                log.info("Received applicationDidHide_")
+
+            def applicationDidUnhide_(self, notification):
+                log.info("Received applicationDidUnhide_")
+
+            def applicationWillBecomeActive_(self, notification):
+                log.info("Received applicationWillBecomeActive_")
+
+            def applicationDidBecomeActive_(self, notification):
+                log.info("Received applicationDidBecomeActive_")
+
+            def applicationDidResignActive_(self, notification):
+                log.info("Received applicationDidResignActive_")
+
+            def applicationShouldTerminateAfterLastWindowClosed_(self, notification):
+                log.info("Received applicationShouldTerminateAfterLastWindowClosed_")
 
         return AppDelegate
 
@@ -96,8 +206,14 @@ class Sniffer:
         self.workspace = NSWorkspace.sharedWorkspace()
 
         def handler(signal, frame):
+            log.debug("Got signal termination")
+            release_lock()
             AppHelper.stopEventLoop()
+            os._exit(1)
+
         signal.signal(signal.SIGINT, handler)
+        signal.signal(signal.SIGTERM, handler)
+
         AppHelper.runEventLoop()
 
     def cancel(self):
@@ -109,8 +225,8 @@ class Sniffer:
             event_type = event.type()
             todo = lambda: None
             if (
-                time.time() - self.last_check_windows > FORCE_SCREEN_CHANGE and
-                event_type != NSKeyUp
+                    time.time() - self.last_check_windows > FORCE_SCREEN_CHANGE and
+                    event_type != NSKeyUp
             ):
                 self.last_check_windows = time.time()
                 check_windows = True
@@ -149,10 +265,10 @@ class Sniffer:
                 elif event.keyCode() == 51:
                     character = "Backspace"
                 todo = lambda: self.key_hook(event.keyCode(),
-                              modifiers,
-                              keycodes.get(character,
-                                           character),
-                              event.isARepeat())
+                                             modifiers,
+                                             keycodes.get(character,
+                                                          character),
+                                             event.isARepeat())
             elif event_type == NSMouseMoved:
                 todo = lambda: self.mouse_move_hook(loc.x, loc.y)
             elif event_type == NSFlagsChanged:
@@ -196,6 +312,7 @@ class Sniffer:
         except:
             AppHelper.stopEventLoop()
             raise
+
 
 # Cocoa does not provide a good api to get the keycodes, therefore we
 # have to provide our own.

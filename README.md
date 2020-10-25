@@ -1,7 +1,63 @@
-### What is this?
+## What is this?
 Selfspy is a daemon for Unix/X11, (thanks to @ljos!) Mac OS X and (thanks to @Foxboron) Windows, that continuously monitors and stores what you are doing on your computer. This way, you can get all sorts of nifty statistics and reminders on what you have been up to. It is inspired by the [Quantified Self](http://en.wikipedia.org/wiki/Quantified_Self)-movement and [Stephen Wolfram's personal key logging](http://blog.stephenwolfram.com/2012/03/the-personal-analytics-of-my-life/).
 
 See Example Statistics, below, for some of the fabulous things you can do with this data.
+  
+*SQLAlchemy does compile without the external compiler, but it uses a clean Python version which might slow things down.  
+   
+## Dependencies
+
+Selfspy is only tested with Python 2.7 and has a few dependencies on other Python libraries that need to be satisfied. These are documented in the requirements.txt file. 
+
+
+### Linux
+If you are on Linux, you will need subversion installed for pip to install python-xlib. Python-xlib is currently a tricky package to include in the requirements since it is not on PyPi.
+
+```
+pip install svn+https://python-xlib.svn.sourceforge.net/svnroot/python-xlib/tags/xlib_0_15rc1/ # Only do this step on Linux!
+```
+
+#### Ubuntu & Debian
+
+```
+sudo apt-get install python-tk
+```
+
+#### ArchLinux
+
+Here is an AUR package which may be up-to-date:
+https://aur.archlinux.org/packages/selfspy-git/
+
+If it is not, see manual install below.
+
+### BSD
+
+#### FreeBSD
+
+Install py-tkinter:
+```
+cd /usr/ports/x11-toolkits/py-tkinter/
+sudo make config-recursive && sudo make install clean
+```
+
+#### OpenBSD
+
+Install python-tkinter (choose python 2.7 version):
+```
+# pkg_add python-tkinter
+```
+Install py-keyring:
+```
+# pkg_add py-keyring
+```
+
+### OS X
+If you are on Mac, you will not need to install python-xlib at all. 
+In OS X you also need to enable access for assistive devices.
+To do that in &lt;10.9 there is a checkbox in `System Preferences > Accessibility`,
+in 10.9 you have to add the correct application in
+`System Preferences > Privacy > Accessibility`.
+
 
 ### Windows
 
@@ -13,37 +69,22 @@ They are added too the windows-requirements.txt, but IF you fail to build these 
 pyHook: http://sourceforge.net/projects/pyhook/files/pyhook/   
 pyCrytpo: http://www.voidspace.org.uk/python/modules.shtml#pycrypto   
 pyWin32: http://sourceforge.net/projects/pywin32/files/pywin32/  
-  
-*SQLAlchemy does compile without the external compiler, but it uses a clean Python version which might slow things down.  
-   
-### Installing Selfspy
 
-If you run ArchLinux, here is an AUR package which may be up-to-date:
-https://aur.archlinux.org/packages/selfspy-git/
 
-To install manually, either clone the repository from Github (git clone git://github.com/gurgeh/selfspy), or click on the Download link on http://github.com/gurgeh/selfspy/ to get the latest Python source.
+## Installing Selfspy
 
-Selfspy is only tested with Python 2.7 and has a few dependencies on other Python libraries that need to be satisfied. These are documented in the requirements.txt file. If you are on Linux, you will need subversion installed for pip to install python-xlib. If you are on Mac, you will not need to install python-xlib at all. Python-xlib is currently a tricky package to include in the requirements since it is not on PyPi.
+Once you installed the dependencies for your system, you can begin the install. Either clone the repository from Github (git clone git://github.com/gurgeh/selfspy), or click on the Download link on http://github.com/gurgeh/selfspy/ to get the latest Python source, then simply run setup.py.
+
+For example:
+
 ```
-pip install svn+https://python-xlib.svn.sourceforge.net/svnroot/python-xlib/tags/xlib_0_15rc1/ # Only do this step on Linux!
+git clone git://github.com/gurgeh/selfspy
+cd selfspy
 python setup.py install
 ```
 
-You will also need the ``Tkinter`` python libraries. On ubuntu and debian
+There is also a simple Makefile, if you prefer that. Run `make install` as root/sudo, to install the files in /var/lib/selfspy and also create the symlinks /usr/bin/selfspy and /usr/bin/selfstats.
 
-```
-sudo apt-get install python-tk
-```
-
-On FreeBSD
-
-```
-cd /usr/ports/x11-toolkits/py-tkinter/
-sudo make config-recursive && sudo make install clean
-```
-
-
-There is also a simple Makefile. Run `make install` as root/sudo, to install the files in /var/lib/selfspy and also create the symlinks /usr/bin/selfspy and /usr/bin/selfstats.
 
 Report issues here:
 https://github.com/gurgeh/selfspy/issues
@@ -51,13 +92,7 @@ https://github.com/gurgeh/selfspy/issues
 General discussion here:
 http://ost.io/gurgeh/selfspy
 
-#### OS X
-In OS X you also need to enable access for assistive devices.
-To do that in &lt;10.9 there is a checkbox in `System Preferences > Accessibility`,
-in 10.9 you have to add the correct application in
-`System Preferences > Privacy > Accessibility`.
-
-### Running Selfspy
+## Running Selfspy
 You run selfspy with `selfspy`. You should probably start with `selfspy --help` to get to know the command line arguments. As of this writing, it should look like this:
 
 ```
@@ -105,11 +140,11 @@ Unless you use the --no-text flag, selfspy will store everything you type in two
 
 Normally you would like Selfspy to start automatically when you launch X. How to do this depends on your system, but it will normally mean editing *~/.xinitrc* or *~/.xsession*. If you run KDE, *~/.kde/Autostart*, is a good place to put startup scripts. When run, Selfspy will immediately spawn a daemon and exit.
 
-#### Running on login in OS X
+### Running on login in OS X
 If you want selfspy to start automatically on login you need to copy the [com.github.gurgeh.selfspy.plist](https://raw.githubusercontent.com/gurgeh/selfspy/master/com.github.gurgeh.selfspy.plist)
 file to `~/Library/LaunchAgents/`.
 
-### Example Statistics
+## Example Statistics
 *"OK, so now all this data will be stored, but what can I use it for?"*
 
 While you can access the Sqlite tables directly or, if you like Python, import `models.py` from the Selfspy directory and use those SqlAlchemy classes, the standard way to query your data is through `selfstats`.
@@ -187,7 +222,7 @@ List all buffers in Emacs that contained "cpp", from the first this month and fo
 
 Selfstats is a swiss army knife of self knowledge. Experiment with it when you have acquired a few days of data. Remember that if you know SQL or SqlAlchemy, it is easy to construct your own queries against the database to get exactly the information you want, make pretty graphs, etc. There are a few stored properties, like coordinates of a mouse click and window geometry, that you can currently only reach through the database.
 
-### Selfstats Reference
+## Selfstats Reference
 
 The --help is a beast that right now looks something like this:
 
@@ -307,7 +342,7 @@ optional arguments:
 See the README file or http://gurgeh.github.com/selfspy for examples.
 ```
 
-### Email
+## Email feedback
 To monitor that Selfspy works as it should and to continuously get feedback on yourself, it is good to  regularly mail yourself some statistics. I think the easiest way to automate this is using [sendEmail](http://www.debianadmin.com/how-to-sendemail-from-the-command-line-using-a-gmail-account-and-others.html), which can do neat stuff like send through your Gmail account.
 
 For example, put something like this in your weekly [cron](http://clickmojo.com/code/cron-tutorial.html) jobs:

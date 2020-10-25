@@ -15,22 +15,30 @@
 # You should have received a copy of the GNU General Public License
 # along with Selfspy.  If not, see <http://www.gnu.org/licenses/>.
 
+import logging
+import traceback
+
+log = logging.getLogger(__name__)
+
 import time
+import functools
 from datetime import datetime
 NOW = datetime.now
 
-import sqlalchemy
+from sqlalchemy import exc
 
+PLATFORM='linux'
 import platform
 if platform.system() == 'Darwin':
-    from selfspy import sniff_cocoa as sniffer
+    from selfspy.modules import sniff_cocoa as sniffer
+    PLATFORM='osx'
 elif platform.system() == 'Windows':
-    from selfspy import sniff_win as sniffer
+    from selfspy.modules import sniff_win as sniffer
+    PLATFORM='win'
 else:
-    from selfspy import sniff_x as sniffer
+    from selfspy.modules import sniff_x as sniffer
 
-from selfspy import models
-from selfspy.models import Process, Window, Geometry, Click, Keys
+from selfspy.modules import models
 
 
 SKIP_MODIFIERS = {"", "Shift_L", "Control_L", "Super_L", "Alt_L", "Super_R", "Control_R", "Shift_R", "[65027]"}  # [65027] is AltGr in X for some ungodly reason.
@@ -82,7 +90,7 @@ class ActivityStore:
             try:
                 self.session.commit()
                 break
-            except sqlalchemy.exc.OperationalError:
+            except exc.OperationalError:
                 time.sleep(1)
             except:
                 self.session.rollback()
@@ -95,6 +103,10 @@ class ActivityStore:
         self.sniffer.key_hook = self.got_key
         self.sniffer.mouse_button_hook = self.got_mouse_click
         self.sniffer.mouse_move_hook = self.got_mouse_move
+
+        if PLATFORM == 'osx':
+            # Only tested on osx
+            self.sniffer.start_current_process = self.got_start_current_process
 
         self.sniffer.run()
 
@@ -114,19 +126,17 @@ class ActivityStore:
         if self.last_screen_change == args:
             return
 
-        self.last_screen_change = args
-
         cur_process = self.session.query(
-            Process
+            models.Process
         ).filter_by(
             name=process_name
         ).scalar()
         if not cur_process:
-            cur_process = Process(process_name)
+            cur_process = models.Process(process_name)
             self.session.add(cur_process)
 
         cur_geometry = self.session.query(
-            Geometry
+            models.Geometry
         ).filter_by(
             xpos=win_x,
             ypos=win_y,
@@ -134,22 +144,34 @@ class ActivityStore:
             height=win_height
         ).scalar()
         if not cur_geometry:
-            cur_geometry = Geometry(win_x, win_y, win_width, win_height)
+            cur_geometry = models.Geometry(win_x, win_y, win_width, win_height)
             self.session.add(cur_geometry)
 
-        cur_window = self.session.query(Window).filter_by(title=window_name,
-                                                          process_id=cur_process.id).scalar()
+        cur_window = self.session.query(models.Window).filter_by(title=window_name,
+                                                                 process_id=cur_process.id).scalar()
         if not cur_window:
-            cur_window = Window(window_name, cur_process.id)
+            log.debug(
+                u"Add window(process:{}, window:{})"
+                .format(process_name, window_name))
+            cur_window = models.Window(window_name, cur_process.id)
             self.session.add(cur_window)
 
         if not (self.current_window.proc_id == cur_process.id
                 and self.current_window.win_id == cur_window.id):
-            self.trycommit()
-            self.store_keys()  # happens before as these keypresses belong to the previous window
-            self.current_window.proc_id = cur_process.id
-            self.current_window.win_id = cur_window.id
-            self.current_window.geo_id = cur_geometry.id
+
+            try:
+                self.trycommit()
+                self.store_keys()  # happens before as these keypresses belong to the previous window
+                self.current_window.proc_id = cur_process.id
+                self.current_window.win_id = cur_window.id
+                self.current_window.geo_id = cur_geometry.id
+            except:
+                traceback.print_exc()
+
+        # allows store_key method to log then update the variable
+        log.debug("Change screen to: {}".format(args))
+        self.last_screen_change = args
+
 
     def filter_many(self):
         specials_in_row = 0
@@ -183,10 +205,17 @@ class ActivityStore:
             self.filter_many()
 
         if self.key_presses:
+            if self.last_screen_change:
+                log.debug(
+                    u"Storing keys for: {} length: {}"
+                    .format(self.last_screen_change, len(self.key_presses)))
+            else:
+                log.warning("Storing keys to non-existent screen. Okay if first screen")
+
             keys = [press.key for press in self.key_presses]
             timings = [press.time for press in self.key_presses]
             add = lambda count, press: count + (0 if press.is_repeat else 1)
-            nrkeys = reduce(add, self.key_presses, 0)
+            nrkeys = functools.reduce(add, self.key_presses, 0)
 
             curtext = u""
             if not self.store_text:
@@ -194,20 +223,18 @@ class ActivityStore:
             else:
                 curtext = ''.join(keys)
 
-            self.session.add(Keys(curtext.encode('utf8'),
-                                  keys,
-                                  timings,
-                                  nrkeys,
-                                  self.started,
-                                  self.current_window.proc_id,
-                                  self.current_window.win_id,
-                                  self.current_window.geo_id))
+            keys_to_store = models.Keys(curtext.encode('utf8'), keys, timings, nrkeys,
+                                 self.started, self.current_window.proc_id,
+                                 self.current_window.win_id, self.current_window.geo_id)
+            self.session.add(keys_to_store)
 
             self.trycommit()
 
             self.started = NOW()
             self.key_presses = []
             self.last_key_time = time.time()
+        else:
+            log.warning("No keys, skipping...: {}".format(self.last_screen_change))
 
     def got_key(self, keycode, state, string, is_repeat):
         """ Receives key-presses and queues them for storage.
@@ -217,6 +244,7 @@ class ActivityStore:
                   specifier, i.e: SHIFT or SHIFT_L/SHIFT_R, ALT, CTRL
             string is the string representation of the key press
             repeat is True if the current key is a repeat sent by the keyboard """
+        log.debug("keycode:{} state:{} string:{} is_repeat:{}".format(keycode, state, string, is_repeat))
         now = time.time()
 
         if string in SKIP_MODIFIERS:
@@ -232,7 +260,7 @@ class ActivityStore:
 
     def store_click(self, button, x, y):
         """ Stores incoming mouse-clicks """
-        self.session.add(Click(button,
+        self.session.add(models.Click(button,
                                True,
                                x, y,
                                len(self.mouse_path),
@@ -259,14 +287,20 @@ class ActivityStore:
             x,y are the new coorinates on moving the mouse"""
         self.mouse_path.append([x, y])
 
+    def got_start_current_process(self):
+        """ Reset the timer so tracking begins at the current time instead of
+        the time of the last store_keys method call"""
+        self.started = NOW()
+
     def close(self):
         """ stops the sniffer and stores the latest keys. To be used on shutdown of program"""
+        log.info("Shutting down Selfspy")
         self.sniffer.cancel()
         self.store_keys()
 
     def change_password(self, new_encrypter):
         self.session = self.session_maker()
-        keys = self.session.query(Keys).all()
+        keys = self.session.query(models.Keys).all()
         for k in keys:
             dtext = k.decrypt_text()
             dkeys = k.decrypt_keys()

@@ -14,7 +14,7 @@
 
 # You should have received a copy of the GNU General Public License
 # along with Selfspy.  If not, see <http://www.gnu.org/licenses/>.
-
+import base64
 import zlib
 import json
 import re
@@ -166,7 +166,7 @@ class Keys(SpookMixin, Base):
     timings = Column(Binary)
 
     def __init__(self, text, keys, timings, nrkeys, started, process_id, window_id, geometry_id):
-        ztimings = zlib.compress(json.dumps(timings))
+        ztimings = base64.b64encode(zlib.compress(json.dumps(timings).encode('utf-8')))
 
         self.encrypt_text(text)
         self.encrypt_keys(keys)
@@ -180,11 +180,11 @@ class Keys(SpookMixin, Base):
         self.geometry_id = geometry_id
 
     def encrypt_text(self, text, other_encrypter=None):
-        ztext = maybe_encrypt(text, other_encrypter=other_encrypter)
+        ztext = maybe_encrypt(text.decode('utf-8'), other_encrypter=other_encrypter)
         self.text = ztext
 
     def encrypt_keys(self, keys, other_encrypter=None):
-        zkeys = maybe_encrypt(zlib.compress(json.dumps(keys)),
+        zkeys = maybe_encrypt(base64.b64encode(zlib.compress(json.dumps(keys).encode('utf-8'))).decode('utf-8'),
                               other_encrypter=other_encrypter)
         self.keys = zkeys
 
@@ -196,7 +196,7 @@ class Keys(SpookMixin, Base):
 
     def decrypt_keys(self):
         keys = maybe_decrypt(self.keys)
-        return json.loads(zlib.decompress(keys))
+        return json.loads(zlib.decompress(base64.b64decode(keys)))
 
     def to_humanreadable(self, text):
         backrex = re.compile("\<\[Backspace\]x?(\d+)?\>",re.IGNORECASE)
@@ -217,7 +217,7 @@ class Keys(SpookMixin, Base):
         return text
 
     def load_timings(self):
-        return json.loads(zlib.decompress(self.timings))
+        return json.loads(zlib.decompress(base64.b64decode(self.timings)))
 
     def __repr__(self):
         return "<Keys %s>" % self.nrkeys
